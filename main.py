@@ -79,7 +79,7 @@ async def run_agent_loop(user_input, state):
 
             elif Agent.is_model_request_node(node):
                 for part in node.request.parts:
-                    if part.part_kind == "tool-return":
+                    if part.part_kind in ("tool-return", "retry-prompt"):
                         print_part(part)
 
     apply_result(state, run.result)
@@ -106,7 +106,12 @@ def main():
             continue
 
         # 核心 Agent 循环：自己驱动节点流转，实时打印每一步
-        asyncio.run(run_agent_loop(user_input, state))
+        try:
+            asyncio.run(run_agent_loop(user_input, state))
+        except KeyboardInterrupt:
+            console.print("\n[bold yellow]已中断[/]\n")
+        except Exception as e:
+            console.print(f"\n[bold red]✗ {type(e).__name__}: {e}[/]\n")
 
 
 if __name__ == "__main__":
