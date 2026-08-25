@@ -4,6 +4,7 @@ from prompt_toolkit import PromptSession
 from pydantic_ai import Agent
 from pydantic_graph import End
 
+import session
 from agent import agent, MODEL_NAME, api_call_log
 from ui.commands import (
     COMMANDS,
@@ -58,6 +59,8 @@ def apply_result(state, result):
     state.input_tokens += usage.input_tokens
     state.output_tokens += usage.output_tokens
     state.last_api_calls = list(api_call_log)
+    # 把本轮新增的消息追加到会话文件
+    session.append_messages(state.session_id, result.new_messages())
 
 
 async def run_agent_loop(user_input, state):
@@ -87,7 +90,10 @@ async def run_agent_loop(user_input, state):
 
 
 def main():
-    state = SessionState(model_name=MODEL_NAME)
+    state = SessionState(
+        model_name=MODEL_NAME,
+        session_id=session.new_session_id(),
+    )
     print_welcome_banner("Coding Agent")
 
     while True:
