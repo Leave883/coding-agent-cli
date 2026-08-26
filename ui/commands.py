@@ -2,11 +2,12 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import questionary
+from prompt_toolkit.application import in_terminal
 from rich.markdown import Heading, Markdown
 from rich.markup import escape
 from rich.padding import Padding
-from rich.rule import Rule
 
+import permissions
 import session
 from .render import console, print_step, print_welcome_banner
 
@@ -46,13 +47,6 @@ class Command:
     description: str
     # handler 返回 False 表示主循环应当退出
     handler: Callable[["SessionState"], bool]
-
-
-def print_divider() -> None:
-    """
-    每轮交互之前打印一条分割线，区分输入区域。Rule 会自适应终端宽度。
-    """
-    console.print(Rule(style="grey50"))
 
 
 def _truncate(text, limit: int = 120) -> str:
@@ -161,6 +155,8 @@ def cmd_new(state: SessionState) -> bool:
     state.output_tokens = 0
     state.last_api_calls.clear()
     state.session_id = session.new_session_id()
+    # 权限白名单是会话级的，「本会话不再询问」不该带进新会话
+    permissions.state.session_allowed.clear()
     console.print("已开启新会话\n")
     return True
 
@@ -175,9 +171,10 @@ def _summary_line(mtime, prompt: str) -> str:
     return f"{mtime:%m-%d %H:%M}  {prompt}"
 
 
-def cmd_resume(state: SessionState) -> bool:
+async def cmd_resume(state: SessionState) -> bool:
     """
     列出当前项目的历史会话，选中后恢复对话历史。
+    它跑在 REPL 的事件循环里，所以是异步的：in_terminal 把终端让给 questionary，结束后再恢复输入框。
     """
     sessions = session.list_sessions()
     if not sessions:
@@ -188,9 +185,10 @@ def cmd_resume(state: SessionState) -> bool:
         questionary.Choice(title=_summary_line(mtime, prompt), value=sid)
         for sid, mtime, prompt in sessions
     ]
-    selected = questionary.select(
-        "选择要恢复的会话（上下键移动，回车确认，Ctrl+C 取消）：", choices=choices
-    ).ask()
+    async with in_terminal():
+        selected = await questionary.select(
+            "选择要恢复的会话（上下键移动，回车确认）：", choices=choices
+        ).ask_async()
     # 用户按 Ctrl+C 取消选择
     if selected is None:
         return True
@@ -198,6 +196,8 @@ def cmd_resume(state: SessionState) -> bool:
     # 还原对话历史，并把会话 ID 切换成选中的旧会话，后续消息继续追加到同一个文件
     state.history = session.load_history(selected)
     state.session_id = selected
+    # 权限白名单是会话级的，切换会话后清空
+    permissions.state.session_allowed.clear()
 
     # jsonl 里每条模型回复都带 usage，把会话的 token 用量累加回来
     state.input_tokens = sum(
@@ -221,6 +221,7 @@ def cmd_resume(state: SessionState) -> bool:
 
 def cmd_status(state: SessionState) -> bool:
     console.print(f"模型：           {state.model_name}")
+    console.print(f"权限模式：       {permissions.state.mode}")
     console.print(f"历史消息条数：    {len(state.history)}")
     console.print(f"累计输入 tokens：{state.input_tokens}")
     console.print(f"累计输出 tokens：{state.output_tokens}\n")

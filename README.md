@@ -9,3 +9,5 @@
 
 增加会话管理：每轮对话结束后将消息追加到 jsonl。实现 /resume，恢复历史对话。
 
+实现权限审查：default、acceptEdits、bypass 三种权限模式。工具自检揪出参数里的高危操作。
+

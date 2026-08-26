@@ -1,6 +1,5 @@
 import asyncio
 
-from prompt_toolkit import PromptSession
 from pydantic_ai import Agent
 from pydantic_graph import End
 
@@ -10,30 +9,13 @@ from ui.commands import (
     COMMANDS,
     SessionState,
     console,
-    print_divider,
     print_part,
     print_welcome_banner,
 )
-
-# PromptSession 比内置 input() 好用：支持左右移动光标编辑，还会记住本次运行的输入历史，上下方向键可以翻
-prompt_session = PromptSession()
+from ui.input_ui import Repl
 
 
-def read_user_input():
-    """
-    打印上横线并读一行用户输入；回车后再补一条下横线，让输入在滚动历史里保持上下边界。返回 None 表示用户希望退出（Ctrl-C / Ctrl-D）。
-    """
-    print_divider()
-    try:
-        user_input = prompt_session.prompt("❯ ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return None
-    print_divider()
-    return user_input
-
-
-def handle_command(user_input, state):
+async def handle_command(user_input, state):
     """
     处理以 / 开头的命令。
     返回 'pass'：不是命令，主循环继续往下走交给 Agent；
@@ -47,7 +29,11 @@ def handle_command(user_input, state):
     if command is None:
         console.print(f"未知命令：/{cmd_name}，输入 /help 查看可用命令\n")
         return "continue"
-    return "continue" if command.handler(state) else "break"
+    result = command.handler(state)
+    # 个别命令（如 /resume）要弹交互式列表，是异步的，需要 await
+    if asyncio.iscoroutine(result):
+        result = await result
+    return "continue" if result else "break"
 
 
 def apply_result(state, result):
@@ -65,7 +51,7 @@ def apply_result(state, result):
 
 async def run_agent_loop(user_input, state):
     """
-    展开 agent.run_sync()，逐节点驱动 Agent 循环，每步实时打印。
+    展开 agent.iter()，逐节点驱动 Agent 循环，每步实时打印。
     """
     api_call_log.clear()
 
@@ -86,39 +72,38 @@ async def run_agent_loop(user_input, state):
                         print_part(part)
 
     apply_result(state, run.result)
-    console.print()
 
 
-def main():
+async def main():
     state = SessionState(
         model_name=MODEL_NAME,
         session_id=session.new_session_id(),
     )
-    print_welcome_banner("Coding Agent")
+    print_welcome_banner("my-claude-code")
 
-    while True:
-        # 读用户输入
-        user_input = read_user_input()
-        if user_input is None:
-            break
-        if not user_input:
-            continue
+    # 常驻输入区：输入框整个会话期间不消失
+    repl = Repl(state)
 
-        # 处理 / 开头的命令
-        action = handle_command(user_input, state)
+    async def on_submit(user_input):
+        # 每次回车提交一行输入，都走这里
+        # 先处理 / 开头的命令
+        action = await handle_command(user_input, state)
         if action == "break":
-            break
+            # 命令要求退出，结束常驻输入区
+            repl.exit()
+            return
         if action == "continue":
-            continue
+            return
 
-        # 核心 Agent 循环：自己驱动节点流转，实时打印每一步
-        try:
-            asyncio.run(run_agent_loop(user_input, state))
-        except KeyboardInterrupt:
-            console.print("\n[bold yellow]已中断[/]\n")
-        except Exception as e:
-            console.print(f"\n[bold red]✗ {type(e).__name__}: {e}[/]\n")
+        # 核心 Agent 循环：开请求时显示 working...，结束 / 被打断后由 Repl 统一隐藏；中途按 ESC / Ctrl+C 会打断
+        repl.start_working()
+        await run_agent_loop(user_input, state)
+
+    await repl.run(on_submit)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, EOFError):
+        pass
