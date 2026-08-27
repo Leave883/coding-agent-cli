@@ -11,3 +11,4 @@
 
 实现权限审查：default、acceptEdits、bypass 三种权限模式。工具自检揪出参数里的高危操作。
 
+增加新的权限模式 auto：审查先交给另一个 LLM。实现 auto 模式。 
